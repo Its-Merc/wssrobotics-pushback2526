@@ -9,42 +9,38 @@
 
 # Library imports
 # type: ignore
-from vex import (
-    Brain,
-    Competition,
-    wait,
-    MSEC,
-    CurrentUnits,
-    AiVision,
-    DriveTrain,
-    Motor,
-    MotorGroup,
-    RIGHT,
-    LEFT,
-    DEGREES,
-    AiVisionObject,
-    FORWARD,
-    REVERSE,
-    Inertial,
-    SmartDrive,
-    GearSetting,
-    Controller,
-    Thread,
-)
+from vex import Controller
+from vex import *
 
 # from typing import List, Dict, Any
 import urandom
 import math
 
 # constants
-IDLE_TURN_SPEED = 8
+IDLE_TURN_DEGREES = 1
 IDLE_TURN_DIR = RIGHT
 
 GRAB_SIZE_REQ = 35
 GRAB_X_RANGE = 35
 GRAB_Y_POS = 145
 
-CTRLER_DEADZONE = 5
+DRIVETRAIN_DEADZONE = 1
+
+RAMP_POSITIONS = [90, -43, -20]
+RAMP_DIR_OFFSET = 0
+
+# 2, 1 front, 12, 11, back
+DRIVETRAIN_PORTS = [1, 0, 11, 10]  # front motors, back motors, l -> r
+
+MOTOR_INTAKE_PORT = 3
+MOTOR_SCORING_PORT = 4
+MOTOR_SORTING_PORT = 5
+MOTOR_RAMP_PORT = 6
+
+AI_SENSOR_PORT = 11
+INERTIAL_SENSOR_PORT = 10
+OPTICAL_SENSOR_PORT = 7
+
 
 # wait for rotation sensor to fully initialize
 wait(30, MSEC)
@@ -55,17 +51,38 @@ scr = br.screen  # 480x240 px screen
 
 # setup drivetrain
 # from the auto generator
-left_drive_smart = Motor(0, GearSetting.RATIO_18_1, False)
-right_drive_smart = Motor(1, GearSetting.RATIO_18_1, True)
-inertial_sensor = Inertial(2)
+motor_l_a = Motor(DRIVETRAIN_PORTS[0], GearSetting.RATIO_18_1, False)
+motor_l_b = Motor(DRIVETRAIN_PORTS[2], GearSetting.RATIO_18_1, False)
+motorgroup_l = MotorGroup(motor_l_a, motor_l_b)
+motor_r_a = Motor(DRIVETRAIN_PORTS[1], GearSetting.RATIO_18_1, True)
+motor_r_b = Motor(DRIVETRAIN_PORTS[3], GearSetting.RATIO_18_1, True)
+motorgroup_r = MotorGroup(motor_r_a, motor_r_b)
+inertial_sensor = Inertial(INERTIAL_SENSOR_PORT)
 drivetrain = SmartDrive(
-    left_drive_smart, right_drive_smart, inertial_sensor, 319.19, 320, 40, MM, 1
+    motorgroup_l, motorgroup_r, inertial_sensor, 319.19, 320, 40, MM, 1
 )
 
 # controller
 ctrler = Controller(PRIMARY)
+ctrler_r_horiz = ctrler.axis1
+ctrler_r_vert = ctrler.axis2
+ctrler_l_vert = ctrler.axis3
+ctrler_l_horiz = ctrler.axis4
+
 ctrler_l_dead = False
 ctrler_r_dead = False
+
+ctrler_btn_ai_toggle = ctrler.buttonY
+ctrler_btn_scoring_up_toggle = ctrler.buttonL1
+ctrler_btn_scoring_down_toggle = ctrler.buttonL2
+ctrler_btn_sorting_toggle = ctrler.buttonX
+
+ctrler_btn_intake_in = ctrler.buttonR2
+ctrler_btn_intake_out = ctrler.buttonR1
+
+ctrler_btn_ramp_high = ctrler.buttonUp
+ctrler_btn_ramp_med = ctrler.buttonLeft
+ctrler_btn_ramp_low = ctrler.buttonDown
 
 
 # Make random actually random
@@ -108,80 +125,130 @@ def calibrate_drivetrain():
     scr.set_cursor(1, 1)
 
 
-# from the auto generator
-# define a task that will handle monitoring inputs from ctrler
-def ctrler_loop():
-    global ctrler_l_dead, ctrler_r_dead, remote_control_code_enabled
-    # process the controller input every 20 milliseconds
-    # update the motors based on the input values
-    while True:
-        if remote_control_code_enabled:
-            # stop the motors if the brain is calibrating
-            if inertial_sensor.is_calibrating():
-                left_drive_smart.stop()
-                right_drive_smart.stop()
-                while inertial_sensor.is_calibrating():
-                    sleep(25, MSEC)
+# port >6 (>5)
 
-            # calculate the drivetrain motor velocities from the controller joystick axies
-            # left = axis3
-            # right = axis2
-            drivetrain_left_side_speed = ctrler.axis3.position()
-            drivetrain_right_side_speed = ctrler.axis2.position()
+# vision sensor
+vision = AiVision(AI_SENSOR_PORT, AiVision.ALL_AIOBJS)
+optical = Optical(OPTICAL_SENSOR_PORT)
+optical.set_light_power(100, PERCENT)
 
-            # check if the value is inside of the deadband range
-            if (
-                drivetrain_left_side_speed < CTRLER_DEADZONE
-                and drivetrain_left_side_speed > -CTRLER_DEADZONE
-            ):
-                # check if the left motor has already been stopped
-                if ctrler_l_dead:
-                    # stop the left drive motor
-                    left_drive_smart.stop()
-                    # tell the code that the left motor has been stopped
-                    ctrler_l_dead = True
-            else:
-                # reset the toggle so that the deadband code knows to stop the left motor next
-                # time the input is in the deadband range
-                ctrler_l_dead = False
-            # check if the value is inside of the deadband range
-            if (
-                drivetrain_right_side_speed < CTRLER_DEADZONE
-                and drivetrain_right_side_speed > -CTRLER_DEADZONE
-            ):
-                # check if the right motor has already been stopped
-                if ctrler_r_dead:
-                    # stop the right drive motor
-                    right_drive_smart.stop()
-                    # tell the code that the right motor has been stopped
-                    ctrler_r_dead = True
-            else:
-                # reset the toggle so that the deadband code knows to stop the right motor next
-                # time the input is in the deadband range
-                ctrler_r_dead = False
 
-            # only tell the left drive motor to spin if the values are not in the deadband range
-            if not ctrler_l_dead:
-                left_drive_smart.set_velocity(drivetrain_left_side_speed, PERCENT)
-                left_drive_smart.spin(FORWARD)
-            # only tell the right drive motor to spin if the values are not in the deadband range
-            if not ctrler_r_dead:
-                right_drive_smart.set_velocity(drivetrain_right_side_speed, PERCENT)
-                right_drive_smart.spin(FORWARD)
-        # wait before repeating the process
-        wait(20, MSEC)
+motor_intake = Motor(MOTOR_INTAKE_PORT)
+motor_scoring = Motor(MOTOR_SCORING_PORT)
+motor_sorting = Motor(MOTOR_SORTING_PORT)
+motor_ramp = Motor(MOTOR_RAMP_PORT)
+
+
+def on_ai_toggle():
+    global disable_ai, drivetrain, motor_intake
+    # stop drivetrain and intake when toggling ai
+    disable_ai = not disable_ai
+    drivetrain.stop()
+    motor_intake.stop()
+
+    print("AI Disabled" if disable_ai else "AI Enabled")
+
+
+ctrler_btn_ai_toggle.pressed(on_ai_toggle)
 
 
 # define variable for remote controller enable/disable
-remote_control_code_enabled = True
+ctrler_control_enabled = True
 
-rc_auto_loop_thread_controller_1 = Thread(ctrler_loop)
 
-# vision sensor
-vision = AiVision(3, AiVision.ALL_AIOBJS)
+def stick_func(x: int):
+    return x**3
 
-# other stuff
-intake = Motor(4)
+
+def apply_function_on_stick(pos: int, max: int, func):
+    norm = pos / max
+    changed_norm = func(norm)
+    return changed_norm * max
+
+
+def ctrler_loop():
+    global ctrler_l_dead, ctrler_r_dead, motor_intake, motor_scoring, ctrler_control_enabled
+
+    def set_motor_speed(motor: Motor | MotorGroup, speed: int):
+        if abs(speed) < DRIVETRAIN_DEADZONE:
+            motor.stop()
+            return
+        motor.set_velocity(speed, PERCENT)
+        motor.spin(FORWARD)
+
+    scoring_up_btn_toggled = False
+    scoring_down_btn_toggled = False
+    sorting_btn_toggled = False
+
+    def toggle_scoring_btn(up: bool = True):
+        nonlocal scoring_up_btn_toggled, scoring_down_btn_toggled
+        if up:
+            scoring_up_btn_toggled = not scoring_up_btn_toggled
+            scoring_down_btn_toggled = False
+            return
+        scoring_down_btn_toggled = not scoring_down_btn_toggled
+        scoring_up_btn_toggled = False
+
+    def toggle_sorting_btn():
+        nonlocal sorting_btn_toggled
+        sorting_btn_toggled = not sorting_btn_toggled
+
+    def switch_ramp_btns(pos: int = 0):
+        motor_ramp.spin_to_position(
+            RAMP_POSITIONS[pos] + RAMP_DIR_OFFSET, DEGREES, False
+        )
+
+    ctrler_btn_scoring_up_toggle.pressed(toggle_scoring_btn, [True])
+    ctrler_btn_scoring_down_toggle.pressed(toggle_scoring_btn, [False])
+    ctrler_btn_sorting_toggle.pressed(toggle_sorting_btn)
+    ctrler_btn_ramp_high.pressed(switch_ramp_btns, [0])
+    ctrler_btn_ramp_med.pressed(switch_ramp_btns, [2])
+    ctrler_btn_ramp_low.pressed(switch_ramp_btns, [1])
+
+    # process the controller input every 20 milliseconds
+    # update the motors based on the input values
+    while True:
+        wait(20, MSEC)
+        if not ctrler_control_enabled:
+            continue
+        # stop the motors if the brain is calibrating
+        if inertial_sensor.is_calibrating():
+            motorgroup_l.stop()
+            motorgroup_r.stop()
+            while inertial_sensor.is_calibrating():
+                sleep(25, MSEC)
+            motor_ramp.set_position(90, DEGREES)
+
+        # calculate the drivetrain motor velocities from the controller joystick axies
+        # left = axis3
+        # right = axis2
+
+        d_r_horiz = apply_function_on_stick(ctrler_r_horiz.position(), 100, stick_func)
+        d_l_vert = apply_function_on_stick(ctrler_l_vert.position(), 100, stick_func)
+
+        print(d_r_horiz)
+        print(d_l_vert)
+
+        l_drivetrain_vel = d_l_vert + d_r_horiz
+        r_drivetrain_vel = d_l_vert - d_r_horiz
+
+        set_motor_speed(motorgroup_l, l_drivetrain_vel)
+        set_motor_speed(motorgroup_r, r_drivetrain_vel)
+        set_motor_speed(
+            motor_intake,
+            100 * (ctrler_btn_intake_in.pressing() - ctrler_btn_intake_out.pressing()),
+        )
+        set_motor_speed(
+            motor_scoring,
+            -100 * (scoring_up_btn_toggled - scoring_down_btn_toggled),
+        )
+        set_motor_speed(
+            motor_sorting,
+            100 * (sorting_btn_toggled),
+        )
+
+
+ctrler_loop_thread = Thread(ctrler_loop)
 
 red = 0x00FF0000
 blue = 0x000000FF
@@ -204,22 +271,82 @@ RED = EnumObj("RED", 1)
 # 0 = blue, 1 = red
 TEAM = RED
 
+disable_ai = True
+
+
+# debug stuff for ai sensor
+def ai_sensor_debug(objs: tuple[AiVisionObject], target_obj: AiVisionObject):
+    # debug stuff
+    # enumerate does not work apparently so...
+    for i in range(len(objs)):
+        obj = objs[i]
+
+        # color of the block
+        color = Side(obj.id)
+
+        # set cursor for info
+        scr.set_cursor((4 * i) + 1, 1)
+
+        # info stuff
+        scr.print(obj.centerX, obj.centerY, sep=", ")
+        scr.next_row()
+        scr.print(obj.originX, obj.originY, sep=", ")
+        scr.next_row()
+        scr.print(color.color)  # 0 = blue, 1 = red
+        scr.next_row()
+        scr.print(obj.score)
+
+        # draw rectangle around the object
+        scr.draw_rectangle(
+            obj.originX,
+            obj.originY,
+            obj.width,
+            obj.height,
+            (
+                (blue if color.color == BLUE.name else red)
+                | max(0, min(255, math.ceil((1 - (obj.score / 100)) * 255))) << 24
+            ),
+        )
+
+        # highlight the target object
+        if obj == target_obj:
+            scr.draw_rectangle(
+                obj.originX - 2,
+                obj.originY - 2,
+                obj.width + 4,
+                obj.height + 4,
+                0x00FFFFFF,
+            )
+
+    # vision sensor bounds and center point
+    scr.draw_pixel(160, 120)
+    scr.draw_line(0, 0, 320, 0)
+    scr.draw_line(0, 240, 320, 240)
+    scr.draw_line(0, 0, 0, 240)
+    scr.draw_line(320, 0, 320, 240)
+
 
 # takes a snapshot with the vision sensor and picks the first block
 # then it uses the block's x position and trigonometry to find how many degrees to turn the robot toward the block
 def align_to_block(block_xpos: int):
     global drivetrain
+    print("attempting align")
 
     # 320x240 screen
     # relative position to the center
     scr_x = block_xpos - 160
 
     # find the angle with inverse tangent
-    angle_to_turn = math.degrees(math.atan2(1, scr_x))
+    # 100 as approx distance for now
+    angle_to_turn = math.degrees(math.atan2(scr_x, 360))
+    if abs(angle_to_turn) > 90 or abs(angle_to_turn) < 1:
+        return
+    # print(angle_to_turn)
 
     # turn left or right according to +/-
     direction = RIGHT if angle_to_turn > 0 else LEFT
-    drivetrain.turn_for(direction, abs(angle_to_turn), DEGREES)
+    print(str(angle_to_turn) + " degrees in direction " + str(direction))
+    Thread(drivetrain.turn_for, [direction, abs(angle_to_turn), DEGREES, 40, PERCENT])
 
 
 def detecting_grabbables(
@@ -242,6 +369,16 @@ def detecting_grabbables(
         ):
             return True
     return False
+
+
+def optical_red_or_blue():
+    global optical
+    hue = optical.hue()
+    if hue < 27 or hue > 340:
+        return RED
+    elif hue > 50 and hue < 340:
+        return BLUE
+    return None
 
 
 def on_auto():
@@ -278,89 +415,67 @@ scr.draw_circle(200, 120, 25, 0x00F0000)
 scr.draw_circle(280, 120, 25, 0x00F0000)
 scr.draw_rectangle(220, 40, 40, 80, 0x00F0000)
 
+# print("Unit test 1")
+
+# drivetrain.turn_to_heading(45, RotationUnits.DEG, 70, VelocityUnits.PERCENT)
+
+# print("Unit test 2")
+# drivetrain.turn_for(LEFT, 45, DEGREES, 70, PERCENT)
+
+# print("Unit tests done")
+
 while True:
     # clear the screen
     scr.clear_screen()
 
-    # get detected objs
     objs = vision.take_snapshot(AiVision.ALL_AIOBJS)
 
     # get objs on own team colour
     target_objs = [obj for obj in objs if obj.id == TEAM.as_int]
 
     # TODO should probably update this later
-    target_obj = target_objs[0] if len(target_objs) > 0 else obj
+    target_obj = target_objs[0] if len(target_objs) > 0 else objs[0]
 
-    # if anything we want to grab is detected
-    if len(target_objs) > 0:
-        # align to the first one
-        align_to_block(target_obj.centerX)
-    else:  # otherwise do something else
-        drivetrain.turn_for(IDLE_TURN_DIR, IDLE_TURN_SPEED, DEGREES)
+    Thread(ai_sensor_debug, [objs, target_obj])
 
-    # if we can grab something, grab it
-    if detecting_grabbables(target_objs, GRAB_SIZE_REQ, GRAB_X_RANGE, GRAB_Y_POS):
-        # spin the intake motor and stop moving
-        intake.spin(FORWARD)
-        # drivetrain.stop()
-    # if we can grab something but wrong team, dont
-    elif detecting_grabbables(objs, GRAB_SIZE_REQ, GRAB_X_RANGE, GRAB_Y_POS):
-        # TODO considering changing this
-        intake.spin(REVERSE)
-        # drivetrain.drive(REVERSE)
-    else:
-        intake.stop()
+    # get detected objs
+    if not disable_ai and len(objs) > 0:
+        # if anything we want to grab is detected
+        if len(target_objs) > 0:
+            # align to the first one
+            align_to_block(target_obj.centerX)
+        else:  # otherwise do something else
+            # drivetrain.turn_for(IDLE_TURN_DIR, IDLE_TURN_DEGREES, DEGREES)
+            pass
 
-    # drive
-    drivetrain.drive(FORWARD)
+        # if we can grab something, grab it
+        if detecting_grabbables(target_objs, GRAB_SIZE_REQ, GRAB_X_RANGE, GRAB_Y_POS):
+            # spin the intake motor and stop moving
 
-    # debug stuff
-    # enumerate does not work apparently so...
-    for i in range(len(objs)):
-        obj = objs[i]
+            Thread(motor_intake.spin, [FORWARD])
+            # Thread(drivetrain.stop)
+            pass
+        # if we can grab something but wrong team, dont
+        elif detecting_grabbables(objs, GRAB_SIZE_REQ, GRAB_X_RANGE, GRAB_Y_POS):
+            # TODO considering changing this
 
-        # color of the block
-        color = Side(obj.id)
+            Thread(motor_intake.spin, [REVERSE])
+            # Thread(drivetrain.drive, [REVERSE])
+            pass
+        else:
+            motor_intake.stop()
 
-        # set cursor for info
-        scr.set_cursor((4 * i) + 1, 1)
+        # drive
+        # Thread(drivetrain.drive, [FORWARD])
 
-        # info stuff
-        scr.print(obj.centerX, obj.centerY, sep=", ")
-        scr.next_row()
-        scr.print(obj.originX, obj.originY, sep=", ")
-        scr.next_row()
-        scr.print(color.color)  # 0 = blue, 1 = red
-        scr.next_row()
-        scr.print(obj.score)
+    Thread(ai_sensor_debug, [objs, target_obj])
 
-        # draw rectangle around the object
-        scr.draw_rectangle(
-            obj.originX,
-            obj.originY,
-            obj.width,
-            obj.height,
-            (
-                (blue if color.color == BLUE.name else red)
-                | max(0, min(255, math.ceil((1 - (obj.score / 100)) * 255))) << 24
-            ),
-        )
-
-        # highlight the target object
-        if obj == target_obj:
-            scr.draw_rectangle(
-                obj.centerX - 2,
-                obj.centerY - 2,
-                obj.width + 4,
-                obj.height + 4,
-                0x00FFFFFF,
-            )
-
-    # vision sensor bounds and center point
-    scr.draw_pixel(160, 120)
-    scr.draw_line(0, 0, 320, 0)
-    scr.draw_line(0, 240, 320, 240)
-    scr.draw_line(0, 0, 0, 240)
-    scr.draw_line(320, 0, 320, 240)
+    print(optical.hue())
+    detect = optical_red_or_blue() or "None"
+    print(
+        ("Optical Sensor detected: " + detect.name)
+        if detect != "None"
+        else "Optical Sensor detected nothing"
+    )
 
     wait(50, MSEC)

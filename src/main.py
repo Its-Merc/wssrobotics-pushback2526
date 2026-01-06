@@ -163,7 +163,7 @@ def stick_func(x: int):
 def apply_function_on_stick(pos: int, max: int, func):
     norm = pos / max
     changed_norm = func(norm)
-    return changed_norm * max
+    return round(changed_norm * max)
 
 
 def ctrler_loop():
@@ -375,9 +375,9 @@ def optical_red_or_blue():
     global optical
     hue = optical.hue()
     if hue < 27 or hue > 340:
-        return RED
+        return RED.name
     elif hue > 50 and hue < 340:
-        return BLUE
+        return BLUE.name
     return None
 
 
@@ -471,11 +471,14 @@ while True:
     Thread(ai_sensor_debug, [objs, target_obj])
 
     print(optical.hue())
-    detect = optical_red_or_blue() or "None"
-    print(
-        ("Optical Sensor detected: " + detect.name)
-        if detect != "None"
-        else "Optical Sensor detected nothing"
-    )
+    detect = optical_red_or_blue()
+    print(detect)
+
+    if detect == TEAM.name:
+        motor_sorting.spin(FORWARD)
+    elif detect is not None:
+        motor_sorting.spin(REVERSE)
+    else:
+        motor_sorting.stop()
 
     wait(50, MSEC)

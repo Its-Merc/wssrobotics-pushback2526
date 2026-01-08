@@ -25,9 +25,13 @@ GRAB_X_RANGE = 35
 GRAB_Y_POS = 145
 
 DRIVETRAIN_DEADZONE = 1
+THROTTLE_SMOOTHING = 0.09
+TURN_SMOOTHING = 0.2
 
 RAMP_POSITIONS = [90, -43, -20]
 RAMP_DIR_OFFSET = 0
+
+SORT_SWITCH_DELAY = 400  # ms
 
 # 2, 1 front, 12, 11, back
 DRIVETRAIN_PORTS = [1, 0, 11, 10]  # front motors, back motors, l -> r
@@ -75,7 +79,10 @@ ctrler_r_dead = False
 ctrler_btn_ai_toggle = ctrler.buttonY
 ctrler_btn_scoring_up_toggle = ctrler.buttonL1
 ctrler_btn_scoring_down_toggle = ctrler.buttonL2
-ctrler_btn_sorting_toggle = ctrler.buttonX
+
+ctrler_btn_sorting_out_toggle = ctrler.buttonX  # 1
+ctrler_btn_sorting_in_toggle = ctrler.buttonB  # 2
+ctrler_btn_sorting_no_toggle = ctrler.buttonA  # 0
 
 ctrler_btn_intake_in = ctrler.buttonR2
 ctrler_btn_intake_out = ctrler.buttonR1
@@ -157,7 +164,10 @@ ctrler_control_enabled = True
 
 
 def stick_func(x: int):
-    return x**3
+    if x == 0:
+        return 0
+    squared = math.copysign(max(abs(x), 0.25) ** 2, x)
+    return squared
 
 
 def apply_function_on_stick(pos: int, max: int, func):
@@ -166,8 +176,30 @@ def apply_function_on_stick(pos: int, max: int, func):
     return round(changed_norm * max)
 
 
+def lerp(a: float, b: float, t: float) -> float:
+    return a - (a - b) * t
+
+
+def min_neg(a: int, b: int) -> int:
+    return math.copysign(1, b) * math.copysign(min(abs(a), abs(b)), a)
+
+
+def max_neg(a: int, b: int) -> int:
+    return math.copysign(1, b) * math.copysign(max(abs(a), abs(b)), a)
+
+
+sorting_timer = Timer()
+sorting_timer.reset()
+current_sort = 0  # 0 = none, 1 = team, 2 = other
+sorting_override_btn_mode = -1
+
+
+scoring_up_btn_toggled = False
+scoring_down_btn_toggled = False
+
+
 def ctrler_loop():
-    global ctrler_l_dead, ctrler_r_dead, motor_intake, motor_scoring, ctrler_control_enabled
+    global ctrler_l_dead, ctrler_r_dead, motor_intake, motor_scoring, ctrler_control_enabled, current_sort, sorting_override_btn_mode, scoring_down_btn_toggled, scoring_up_btn_toggled
 
     def set_motor_speed(motor: Motor | MotorGroup, speed: int):
         if abs(speed) < DRIVETRAIN_DEADZONE:
@@ -176,12 +208,8 @@ def ctrler_loop():
         motor.set_velocity(speed, PERCENT)
         motor.spin(FORWARD)
 
-    scoring_up_btn_toggled = False
-    scoring_down_btn_toggled = False
-    sorting_btn_toggled = False
-
     def toggle_scoring_btn(up: bool = True):
-        nonlocal scoring_up_btn_toggled, scoring_down_btn_toggled
+        global scoring_up_btn_toggled, scoring_down_btn_toggled
         if up:
             scoring_up_btn_toggled = not scoring_up_btn_toggled
             scoring_down_btn_toggled = False
@@ -189,9 +217,12 @@ def ctrler_loop():
         scoring_down_btn_toggled = not scoring_down_btn_toggled
         scoring_up_btn_toggled = False
 
-    def toggle_sorting_btn():
-        nonlocal sorting_btn_toggled
-        sorting_btn_toggled = not sorting_btn_toggled
+    def toggle_sorting_btn(mode: int):
+        global sorting_override_btn_mode
+        if mode == sorting_override_btn_mode:
+            sorting_override_btn_mode = -1
+            return
+        sorting_override_btn_mode = mode
 
     def switch_ramp_btns(pos: int = 0):
         motor_ramp.spin_to_position(
@@ -200,10 +231,15 @@ def ctrler_loop():
 
     ctrler_btn_scoring_up_toggle.pressed(toggle_scoring_btn, [True])
     ctrler_btn_scoring_down_toggle.pressed(toggle_scoring_btn, [False])
-    ctrler_btn_sorting_toggle.pressed(toggle_sorting_btn)
+    ctrler_btn_sorting_out_toggle.pressed(toggle_sorting_btn, [1])
+    ctrler_btn_sorting_in_toggle.pressed(toggle_sorting_btn, [2])
+    ctrler_btn_sorting_no_toggle.pressed(toggle_sorting_btn, [0])
     ctrler_btn_ramp_high.pressed(switch_ramp_btns, [0])
     ctrler_btn_ramp_med.pressed(switch_ramp_btns, [2])
     ctrler_btn_ramp_low.pressed(switch_ramp_btns, [1])
+
+    last_d_l_left = 0
+    last_d_r_horiz = 0
 
     # process the controller input every 20 milliseconds
     # update the motors based on the input values
@@ -223,17 +259,27 @@ def ctrler_loop():
         # left = axis3
         # right = axis2
 
-        d_r_horiz = apply_function_on_stick(ctrler_r_horiz.position(), 100, stick_func)
-        d_l_vert = apply_function_on_stick(ctrler_l_vert.position(), 100, stick_func)
+        new_d_r_horiz = apply_function_on_stick(
+            ctrler_r_horiz.position(), 100, stick_func
+        )
+        d_r_horiz = math.floor(lerp(last_d_r_horiz, new_d_r_horiz, TURN_SMOOTHING))
 
-        print(d_r_horiz)
-        print(d_l_vert)
+        new_d_l_vert = ctrler_l_vert.position()
+        d_l_vert = lerp(last_d_l_left, new_d_l_vert, THROTTLE_SMOOTHING)
 
-        l_drivetrain_vel = d_l_vert + d_r_horiz
-        r_drivetrain_vel = d_l_vert - d_r_horiz
+        print("turning: " + str(d_r_horiz))
+        print("throttle: " + str(d_l_vert))
+
+        l_drivetrain_vel = min_neg(math.floor(d_l_vert) + math.floor(d_r_horiz), 100)
+        r_drivetrain_vel = min_neg(math.floor(d_l_vert) - math.floor(d_r_horiz), 100)
+
+        print("left motorgroup vel: " + str(l_drivetrain_vel))
+        print("right motorgroup vel: " + str(r_drivetrain_vel))
+        print()
 
         set_motor_speed(motorgroup_l, l_drivetrain_vel)
         set_motor_speed(motorgroup_r, r_drivetrain_vel)
+
         set_motor_speed(
             motor_intake,
             100 * (ctrler_btn_intake_in.pressing() - ctrler_btn_intake_out.pressing()),
@@ -242,10 +288,21 @@ def ctrler_loop():
             motor_scoring,
             -100 * (scoring_up_btn_toggled - scoring_down_btn_toggled),
         )
-        set_motor_speed(
-            motor_sorting,
-            100 * (sorting_btn_toggled),
-        )
+        if current_sort == 0:
+            set_motor_speed(
+                motor_sorting,
+                100
+                * (
+                    (
+                        (sorting_override_btn_mode == 1)
+                        - (sorting_override_btn_mode == 2)
+                    )
+                    or scoring_up_btn_toggled
+                ),
+            )
+
+        last_d_l_left = d_l_vert
+        last_d_r_horiz = d_r_horiz
 
 
 ctrler_loop_thread = Thread(ctrler_loop)
@@ -415,18 +472,38 @@ scr.draw_circle(200, 120, 25, 0x00F0000)
 scr.draw_circle(280, 120, 25, 0x00F0000)
 scr.draw_rectangle(220, 40, 40, 80, 0x00F0000)
 
-# print("Unit test 1")
+print("Unit test 1")
+
+motor_sorting.spin_for(FORWARD, 1000, MSEC)
+motor_sorting.spin_for(REVERSE, 1000, MSEC)
 
 # drivetrain.turn_to_heading(45, RotationUnits.DEG, 70, VelocityUnits.PERCENT)
 
 # print("Unit test 2")
 # drivetrain.turn_for(LEFT, 45, DEGREES, 70, PERCENT)
 
-# print("Unit tests done")
+print("Unit tests done")
+
+motor_sorting.set_velocity(100, PERCENT)
+
+
+def set_sort(new_sort: int):
+    global motor_sorting, current_sort
+    if new_sort == current_sort:
+        return
+    if new_sort == 0:
+        motor_sorting.stop()
+    elif new_sort == 2:
+        motor_sorting.spin(FORWARD)
+    elif new_sort == 1:
+        motor_sorting.spin(REVERSE)
+    current_sort = new_sort
+
 
 while True:
     # clear the screen
     scr.clear_screen()
+    scr.set_cursor(1, 1)
 
     objs = vision.take_snapshot(AiVision.ALL_AIOBJS)
 
@@ -436,7 +513,7 @@ while True:
     # TODO should probably update this later
     target_obj = target_objs[0] if len(target_objs) > 0 else objs[0]
 
-    Thread(ai_sensor_debug, [objs, target_obj])
+    # Thread(ai_sensor_debug, [objs, target_obj])
 
     # get detected objs
     if not disable_ai and len(objs) > 0:
@@ -468,17 +545,39 @@ while True:
         # drive
         # Thread(drivetrain.drive, [FORWARD])
 
-    Thread(ai_sensor_debug, [objs, target_obj])
+    # print(optical.hue())
+    detect = optical_red_or_blue() or "NONE"
+    # scr.print("optical detecting: " + detect)
+    # scr.next_row()
 
-    print(optical.hue())
-    detect = optical_red_or_blue()
-    print(detect)
+    # scr.print("current sort: " + str(current_sort))
+    # scr.next_row()
+    # scr.print("sorting timer: " + str(sorting_timer.time(MSEC)))
+    # scr.next_row()
 
+    # print("optical detecting: " + detect)
+    # print("current sort: " + str(current_sort))
+    # print("sorting timer: " + str(sorting_timer.time(MSEC)))
+    # print()
+
+    if sorting_override_btn_mode != -1 or scoring_up_btn_toggled:
+        current_sort = 0
+        scr.print("sort override: " + str(sorting_override_btn_mode))
+        wait(50, MSEC)
+        continue
+
+    new_sort = 0
     if detect == TEAM.name:
-        motor_sorting.spin(FORWARD)
-    elif detect is not None:
-        motor_sorting.spin(REVERSE)
+        new_sort = 1
+    elif detect != "NONE":
+        new_sort = 2
     else:
-        motor_sorting.stop()
+        new_sort = 0
+
+    scr.print("new sort: " + str(new_sort))
+
+    if new_sort != current_sort and sorting_timer.time(MSEC) >= SORT_SWITCH_DELAY:
+        sorting_timer.reset()
+        sorting_timer.event(set_sort, SORT_SWITCH_DELAY, [new_sort])
 
     wait(50, MSEC)

@@ -1,37 +1,42 @@
-# ---------------------------------------------------------------------------- #
-#                                                                              #
-# 	Module:       main.py                                                      #
-# 	Author:       daniel                                                       #
-# 	Created:      11/24/2025, 3:33:16 PM                                       #
-# 	Description:  V5 project                                                   #
-#                                                                              #
-# ---------------------------------------------------------------------------- #
+# imports ================================================================
 
-# Library imports
 # type: ignore
 from vex import Controller
 from vex import *
 
-# from typing import List, Dict, Any
-import urandom
-import math
+import urandom, math
 
-# constants
-IDLE_TURN_DEGREES = 1
-IDLE_TURN_DIR = RIGHT
+# end imports ============================================================
+# constants ==============================================================
 
-GRAB_SIZE_REQ = 35
-GRAB_X_RANGE = 35
-GRAB_Y_POS = 145
+# drivetrain settings ---------
 
 DRIVETRAIN_DEADZONE = 1
 THROTTLE_SMOOTHING = 0.09
 TURN_SMOOTHING = 0.2
 
+# end drivetrain settings -----
+# ramp settings ---------------
+
 RAMP_POSITIONS = [90, -43, -20]
 RAMP_DIR_OFFSET = 0
 
+# end ramp settings -----------
+# sorting settings ------------
+
 SORT_SWITCH_DELAY = 400  # ms
+
+# end sorting settings --------
+# ai settings --------------------
+
+IDLE_TURN_DEGREES = 1
+IDLE_TURN_DIR = RIGHT
+GRAB_SIZE_REQ = 35
+GRAB_X_RANGE = 35
+GRAB_Y_POS = 145
+
+# end ai settings ----------------
+# ports -----------------------
 
 # 2, 1 front, 12, 11, back
 DRIVETRAIN_PORTS = [1, 0, 11, 10]  # front motors, back motors, l -> r
@@ -45,72 +50,32 @@ AI_SENSOR_PORT = 11
 INERTIAL_SENSOR_PORT = 10
 OPTICAL_SENSOR_PORT = 7
 
+# end ports -------------------
+# end constants ==========================================================
 
 # wait for rotation sensor to fully initialize
 wait(30, MSEC)
 
+# initialization =========================================================
 
 br = Brain()
 scr = br.screen  # 480x240 px screen
 
-# setup drivetrain
-# from the auto generator
+# drivetrain setup ---------------
+
 motor_l_a = Motor(DRIVETRAIN_PORTS[0], GearSetting.RATIO_18_1, False)
 motor_l_b = Motor(DRIVETRAIN_PORTS[2], GearSetting.RATIO_18_1, False)
 motorgroup_l = MotorGroup(motor_l_a, motor_l_b)
+
 motor_r_a = Motor(DRIVETRAIN_PORTS[1], GearSetting.RATIO_18_1, True)
 motor_r_b = Motor(DRIVETRAIN_PORTS[3], GearSetting.RATIO_18_1, True)
 motorgroup_r = MotorGroup(motor_r_a, motor_r_b)
+
 inertial_sensor = Inertial(INERTIAL_SENSOR_PORT)
+
 drivetrain = SmartDrive(
     motorgroup_l, motorgroup_r, inertial_sensor, 319.19, 320, 40, MM, 1
 )
-
-# controller
-ctrler = Controller(PRIMARY)
-ctrler_r_horiz = ctrler.axis1
-ctrler_r_vert = ctrler.axis2
-ctrler_l_vert = ctrler.axis3
-ctrler_l_horiz = ctrler.axis4
-
-ctrler_l_dead = False
-ctrler_r_dead = False
-
-ctrler_btn_ai_toggle = ctrler.buttonY
-ctrler_btn_scoring_up_toggle = ctrler.buttonL1
-ctrler_btn_scoring_down_toggle = ctrler.buttonL2
-
-ctrler_btn_sorting_out_toggle = ctrler.buttonX  # 1
-ctrler_btn_sorting_in_toggle = ctrler.buttonB  # 2
-ctrler_btn_sorting_no_toggle = ctrler.buttonA  # 0
-
-ctrler_btn_intake_in = ctrler.buttonR2
-ctrler_btn_intake_out = ctrler.buttonR1
-
-ctrler_btn_ramp_high = ctrler.buttonUp
-ctrler_btn_ramp_med = ctrler.buttonLeft
-ctrler_btn_ramp_low = ctrler.buttonDown
-
-
-# Make random actually random
-# from the auto generator
-def initialize_random_seed():
-    wait(100, MSEC)
-    random = (
-        br.battery.voltage(MV)
-        + br.battery.current(CurrentUnits.AMP) * 100
-        + br.timer.system_high_res()
-    )
-    urandom.seed(int(random))
-
-
-# from the auto generator
-def play_vexcode_sound(sound_name):
-    # Helper to make playing sounds from the V5 in VEXcode easier and
-    # keeps the code cleaner by making it clear what is happening
-    print("VEXPlaySound:" + sound_name)
-    wait(5, MSEC)
-
 
 drivetrain_calibrated = False
 
@@ -132,35 +97,75 @@ def calibrate_drivetrain():
     scr.set_cursor(1, 1)
 
 
-# port >6 (>5)
+# end drivetrain setup -------------
+# ctrler setup ---------------------
 
-# vision sensor
+ctrler = Controller(PRIMARY)
+ctrler_r_horiz = ctrler.axis1
+ctrler_r_vert = ctrler.axis2
+ctrler_l_vert = ctrler.axis3
+ctrler_l_horiz = ctrler.axis4
+
+ctrler_l_dead = False
+ctrler_r_dead = False
+
+ctrler_btn_ai_toggle = ctrler.buttonY
+
+ctrler_btn_scoring_up_toggle = ctrler.buttonL1
+ctrler_btn_scoring_down_toggle = ctrler.buttonL2
+scoring_up_btn_toggled = False
+scoring_down_btn_toggled = False
+
+ctrler_btn_sorting_out_toggle = ctrler.buttonX  # 1
+ctrler_btn_sorting_in_toggle = ctrler.buttonB  # 2
+ctrler_btn_sorting_no_toggle = ctrler.buttonA  # 0
+sorting_override_btn_mode = -1
+
+ctrler_btn_intake_in = ctrler.buttonR2
+ctrler_btn_intake_out = ctrler.buttonR1
+
+ctrler_btn_ramp_high = ctrler.buttonUp
+ctrler_btn_ramp_med = ctrler.buttonLeft
+ctrler_btn_ramp_low = ctrler.buttonDown
+
+ctrler_control_enabled = True
+
+# end ctrler setup ---------------
+# sensor setup -------------------
+
 vision = AiVision(AI_SENSOR_PORT, AiVision.ALL_AIOBJS)
 optical = Optical(OPTICAL_SENSOR_PORT)
 optical.set_light_power(100, PERCENT)
 
+# end sensor setup ---------------
+# motors setup -------------------
 
 motor_intake = Motor(MOTOR_INTAKE_PORT)
 motor_scoring = Motor(MOTOR_SCORING_PORT)
 motor_sorting = Motor(MOTOR_SORTING_PORT)
 motor_ramp = Motor(MOTOR_RAMP_PORT)
 
-
-def on_ai_toggle():
-    global disable_ai, drivetrain, motor_intake
-    # stop drivetrain and intake when toggling ai
-    disable_ai = not disable_ai
-    drivetrain.stop()
-    motor_intake.stop()
-
-    print("AI Disabled" if disable_ai else "AI Enabled")
+# end motors setup ----------------
 
 
-ctrler_btn_ai_toggle.pressed(on_ai_toggle)
+# Make random actually random
+# from the auto generator
+def initialize_random_seed():
+    wait(100, MSEC)
+    random = (
+        br.battery.voltage(MV)
+        + br.battery.current(CurrentUnits.AMP) * 100
+        + br.timer.system_high_res()
+    )
+    urandom.seed(int(random))
 
 
-# define variable for remote controller enable/disable
-ctrler_control_enabled = True
+# from the auto generator
+def play_vexcode_sound(sound_name):
+    # Helper to make playing sounds from the V5 in VEXcode easier and
+    # keeps the code cleaner by making it clear what is happening
+    print("VEXPlaySound:" + sound_name)
+    wait(5, MSEC)
 
 
 def stick_func(x: int):
@@ -191,11 +196,6 @@ def max_neg(a: int, b: int) -> int:
 sorting_timer = Timer()
 sorting_timer.reset()
 current_sort = 0  # 0 = none, 1 = team, 2 = other
-sorting_override_btn_mode = -1
-
-
-scoring_up_btn_toggled = False
-scoring_down_btn_toggled = False
 
 
 def ctrler_loop():
@@ -229,14 +229,27 @@ def ctrler_loop():
             RAMP_POSITIONS[pos] + RAMP_DIR_OFFSET, DEGREES, False
         )
 
+    def on_ai_toggle():
+        global disable_ai, drivetrain, motor_intake
+        # stop drivetrain and intake when toggling ai
+        disable_ai = not disable_ai
+        drivetrain.stop()
+        motor_intake.stop()
+
+        print("AI Disabled" if disable_ai else "AI Enabled")
+
     ctrler_btn_scoring_up_toggle.pressed(toggle_scoring_btn, [True])
     ctrler_btn_scoring_down_toggle.pressed(toggle_scoring_btn, [False])
     ctrler_btn_sorting_out_toggle.pressed(toggle_sorting_btn, [1])
+
     ctrler_btn_sorting_in_toggle.pressed(toggle_sorting_btn, [2])
     ctrler_btn_sorting_no_toggle.pressed(toggle_sorting_btn, [0])
+
     ctrler_btn_ramp_high.pressed(switch_ramp_btns, [0])
     ctrler_btn_ramp_med.pressed(switch_ramp_btns, [2])
     ctrler_btn_ramp_low.pressed(switch_ramp_btns, [1])
+
+    ctrler_btn_ai_toggle.pressed(on_ai_toggle)
 
     last_d_l_left = 0
     last_d_r_horiz = 0
@@ -262,7 +275,7 @@ def ctrler_loop():
         new_d_r_horiz = apply_function_on_stick(
             ctrler_r_horiz.position(), 100, stick_func
         )
-        d_r_horiz = math.floor(lerp(last_d_r_horiz, new_d_r_horiz, TURN_SMOOTHING))
+        d_r_horiz = lerp(last_d_r_horiz, new_d_r_horiz, TURN_SMOOTHING)
 
         new_d_l_vert = ctrler_l_vert.position()
         d_l_vert = lerp(last_d_l_left, new_d_l_vert, THROTTLE_SMOOTHING)

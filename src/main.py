@@ -37,7 +37,7 @@ TEAM = BLUE
 # drivetrain settings ------------
 
 DRIVETRAIN_DEADZONE = 2
-DRIVETRAIN_TURN_THRESHOLD = 2
+DRIVETRAIN_TURN_THRESHOLD = 1
 THROTTLE_SMOOTHING = 0.08
 THROTTLE_SMOOTHING_ADD = 0.15
 TURN_SMOOTHING = 0.5
@@ -396,8 +396,8 @@ def get_align_to_blocks(blocks: list[AiVisionObject], max_angle=ALIGN_MAX_ANGLE)
     if len(blocks) == 1:
         xpos = blocks[0].centerX
     else:
-        x_positions = [block.centerX for block in blocks]
-        xpos = sum(x_positions) / len(x_positions)
+        blocks.sort(key=lambda block: (block.width * block.height))
+        xpos = blocks[0]
 
     # 320x240 screen
     # relative position to the center
@@ -489,82 +489,92 @@ def on_auto():
     motor_intake.spin(REVERSE, 100, PERCENT)
     current_sort = 1
 
+    turn_vel = 20
+    throttle_vel = 20
+
+    go_loader_dist_horiz = 30
+    parking_zone_dist = 17
+    loader_dist = parking_zone_dist - 4.5
+    go_back_vert_offset = 4.5
+    go_back_extra = 6
+
     # drivetrain.drive_for(FORWARD, 36, INCHES, 50, PERCENT, False)
     print("ifjifoiseijofesiofs")
-    drivetrain.drive_for(FORWARD, 27, INCHES, 30, PERCENT)
-    wait(1000, MSEC)
+    drivetrain.drive_for(FORWARD, parking_zone_dist, INCHES, throttle_vel, PERCENT)
+    # wait(500, MSEC)
+    drivetrain.turn_to_rotation(90, DEGREES, turn_vel, PERCENT)
+    # wait(500, MSEC)
+    drivetrain.drive_for(FORWARD, go_loader_dist_horiz, INCHES, throttle_vel, PERCENT)
+    # wait(500, MSEC)
+    drivetrain.turn_to_rotation(180, DEGREES, turn_vel - 5, PERCENT)
+    wait(500, MSEC)
     # drivetrain.drive_for(FORWARD, 6, INCHES, 60, PERCENT)
 
-    # find the 3 blocks in front
+    # find the loader blocks
+    # turn_degrees = 0
+    # timer = Timer()
+    # while timer.value() < 2 and turn_degrees == 0:
+    #     # print("fokeofsokfesioesosoi")
+    #     get_ai_objs()
+    #     br.screen.clear_screen()
+    #     ai_sensor_debug(ai_objs, target_obj)
+    #     if len(target_objs) > 0:
+    #         turn_degrees = get_align_to_blocks(target_objs)
 
-    turn_degrees = 0
-    timer = Timer()
-    while timer.value() < 2 and turn_degrees == 0:
-        # print("fokeofsokfesioesosoi")
-        get_ai_objs()
-        br.screen.clear_screen()
-        ai_sensor_debug(ai_objs, target_obj)
-        if len(target_objs) > 0:
-            turn_degrees = get_align_to_blocks(target_objs)
+    #     wait(20, MSEC)
 
-        wait(20, MSEC)
+    # direction = RIGHT if turn_degrees > 0 else LEFT
+    # drivetrain.turn_for(direction, turn_degrees, DEGREES, turn_vel, PERCENT)
+    # wait(500, MSEC)
 
-    direction = RIGHT if turn_degrees > 0 else LEFT
-    drivetrain.turn_for(direction, turn_degrees, DEGREES, 30, PERCENT)
+    switch_ramp_btns(1)
+
+    drivetrain.drive_for(FORWARD, loader_dist, INCHES, throttle_vel, PERCENT)
     wait(500, MSEC)
-    drivetrain.drive_for(FORWARD, 14, INCHES, 20, PERCENT)
-    wait(500, MSEC)
+
+    # rattle em
+    drivetrain.drive(FORWARD, 100, PERCENT)
+    wait(2000, MSEC)
 
     # reverse back to original position
-    drivetrain.drive_for(REVERSE, 14, INCHES, 20, PERCENT)
+    drivetrain.drive_for(
+        REVERSE, loader_dist - go_back_vert_offset, INCHES, throttle_vel, PERCENT
+    )
     wait(500, MSEC)
-    drivetrain.turn_to_rotation(0, DEGREES, 30, PERCENT)
-    wait(500, MSEC)
+
+    switch_ramp_btns(0)
+    # drivetrain.turn_to_rotation(0, DEGREES, 30, PERCENT)
+    # wait(500, MSEC)
 
     # go to loader
-    drivetrain.turn_to_rotation(110, DEGREES, 30, PERCENT)
-    wait(500, MSEC)
-    drivetrain.drive_for(FORWARD, 38, INCHES, 20, PERCENT)
-    wait(2000, MSEC)
-    drivetrain.turn_to_rotation(180, DEGREES, 30, PERCENT)
-    wait(2000, MSEC)
 
-    turn_degrees = 0
-    timer = Timer()
-    while timer.value() < 3 and turn_degrees == 0:
-        # print("fokeofsokfesioesosoi")
-        get_ai_objs()
-        br.screen.clear_screen()
-        ai_sensor_debug(ai_objs, target_obj)
-        if len(target_objs) > 0:
-            turn_degrees = get_align_to_blocks(target_objs)
+    # go back to bottom center goal
 
-        wait(20, MSEC)
+    drivetrain.turn_for(RIGHT, 135, DEGREES, turn_vel, PERCENT)
+    drivetrain.turn_to_heading(315, DEGREES, turn_vel, PERCENT)
+    # wait(500, MSEC)
 
-    direction = RIGHT if turn_degrees > 0 else LEFT
-    drivetrain.turn_for(direction, turn_degrees, DEGREES, 30, PERCENT)
-    wait(2000, MSEC)
+    # pythagorean theorem
+    go_back_dist = math.sqrt((go_loader_dist_horiz**2) * 2) + go_back_extra
 
-    drivetrain.drive_for(FORWARD, 2, INCHES, 30, PERCENT)
-    wait(2000, MSEC)
+    # turn_degrees = 0
+    # timer = Timer()
+    # while timer.value() < 2 and turn_degrees == 0:
+    #     # print("fokeofsokfesioesosoi")
+    #     get_ai_objs()
+    #     br.screen.clear_screen()
+    #     ai_sensor_debug(ai_objs, target_obj)
+    #     if len(target_objs) > 0:
+    #         turn_degrees = get_align_to_blocks(target_objs)
 
-    # go back
-    drivetrain.drive_for(REVERSE, 2, INCHES, 30, PERCENT)
-    wait(2000, MSEC)
-    drivetrain.turn_to_rotation(-30, DEGREES, 30, PERCENT)
-    wait(2000, MSEC)
-    drivetrain.drive_for(FORWARD, 36, INCHES, 30, PERCENT)
-    wait(2000, MSEC)
-    drivetrain.turn_to_rotation(0, DEGREES, 30, PERCENT)
-    wait(2000, MSEC)
+    #     wait(20, MSEC)
 
-    # go to bottom center goal
-    # drivetrain.drive_for(FORWARD, 2, INCHES, 30, PERCENT)
-    # wait(2000, MSEC)
-    drivetrain.turn_to_rotation(-30, DEGREES, 30, PERCENT)
-    wait(2000, MSEC)
-    drivetrain.drive_for(FORWARD, 13, INCHES, 30, PERCENT)
-    wait(2000, MSEC)
+    # direction = RIGHT if turn_degrees > 0 else LEFT
+    # drivetrain.turn_for(direction, turn_degrees, DEGREES, turn_vel, PERCENT)
+    # wait(500, MSEC)
+
+    drivetrain.drive_for(FORWARD, go_back_dist, INCHES, throttle_vel, PERCENT)
+    wait(1000, MSEC)
 
     # motor_intake.spin(FORWARD, 100, PERCENT)
 

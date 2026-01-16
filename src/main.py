@@ -32,25 +32,30 @@ BLUE = EnumObj("BLUE", 0)
 RED = EnumObj("RED", 1)
 
 # 0 = blue, 1 = red
-TEAM = RED
+TEAM = BLUE
 
 # drivetrain settings ------------
 
 DRIVETRAIN_DEADZONE = 2
 DRIVETRAIN_TURN_THRESHOLD = 2
-THROTTLE_SMOOTHING = 0.1
-TURN_SMOOTHING = 0.2
+THROTTLE_SMOOTHING = 0.08
+THROTTLE_SMOOTHING_ADD = 0.15
+TURN_SMOOTHING = 0.5
 
 # end drivetrain settings --------
 # ramp settings ------------------
 
-RAMP_POSITIONS = [90, -43, -20]
+RAMP_POSITIONS = [90, -20, 0]
 RAMP_DIR_OFFSET = 0
 
 # end ramp settings --------------
 # sorting settings ---------------
 
-SORT_SWITCH_DELAY = 400  # ms
+SORT_SWITCH_OFF_DELAY = 500  # ms
+SORT_SWITCH_ON_DELAY = 100  # ms
+
+SORT_DELAY_RATIO_D = 9
+SORT_DELAY_RATIO_N = 4  # the numerator to take of the sort_delay for waiting until the timer is over the delay
 
 # end sorting settings -----------
 # ai settings --------------------
@@ -58,6 +63,8 @@ SORT_SWITCH_DELAY = 400  # ms
 IDLE_TURN_DEGREES = 1
 IDLE_TURN_DIR = RIGHT
 
+ALIGN_MAX_ANGLE = 90
+ALIGN_MAX_ANGLE_DRIVE = 90
 ALIGN_DEADZONE = 2
 
 GRAB_SIZE_REQ = 35
@@ -157,8 +164,7 @@ ctrler_btn_ramp_high = ctrler.buttonUp
 ctrler_btn_ramp_med = ctrler.buttonLeft
 ctrler_btn_ramp_low = ctrler.buttonDown
 
-ctrler_btn_ai_toggle = ctrler.buttonY
-ai_toggled = False
+ctrler_btn_ai_hold = ctrler.buttonY
 
 ctrler_control_enabled = True
 
@@ -169,7 +175,7 @@ vision = AiVision(AI_SENSOR_PORT, AiVision.ALL_AIOBJS)
 optical = Optical(OPTICAL_SENSOR_PORT)
 dist = Distance(DIST_SENSOR_PORT)
 
-optical.set_light_power(100, PERCENT)
+optical.set_light_power(20, PERCENT)
 
 
 def on_collision():
@@ -189,11 +195,19 @@ motor_ramp = Motor(MOTOR_RAMP_PORT)
 motor_sorting.set_velocity(100, PERCENT)
 
 # end motors setup ----------------
+# bumper setup --------------------
+
+bumper_1 = Bumper(br.three_wire_port.a)
+
+# end bumper setup ---------------
 # sorting setup -------------------
 
 sorting_timer = Timer()
 sorting_timer.reset()
 current_sort = 0  # 0 = none, 1 = team, 2 = other
+
+sorting_ratio_wait = SORT_DELAY_RATIO_N / SORT_DELAY_RATIO_D
+sorting_ratio_delay = (SORT_DELAY_RATIO_D - SORT_DELAY_RATIO_N) / SORT_DELAY_RATIO_D
 
 
 def set_sort(new_sort: int):
@@ -253,16 +267,6 @@ def switch_ramp_btns(pos: int = 0):
     motor_ramp.spin_to_position(RAMP_POSITIONS[pos] + RAMP_DIR_OFFSET, DEGREES, False)
 
 
-def on_ai_toggle():
-    global ai_toggled, drivetrain, motor_intake
-    # stop drivetrain and intake when toggling ai
-    ai_toggled = not ai_toggled
-    drivetrain.stop()
-    motor_intake.stop()
-
-    print("AI Disabled" if ai_toggled else "AI Enabled")
-
-
 ctrler_btn_sorting_out_toggle.pressed(toggle_sorting_btn, [1])
 ctrler_btn_sorting_in_toggle.pressed(toggle_sorting_btn, [2])
 ctrler_btn_sorting_no_toggle.pressed(toggle_sorting_btn, [0])
@@ -271,10 +275,24 @@ ctrler_btn_ramp_high.pressed(switch_ramp_btns, [0])
 ctrler_btn_ramp_med.pressed(switch_ramp_btns, [2])
 ctrler_btn_ramp_low.pressed(switch_ramp_btns, [1])
 
-ctrler_btn_ai_toggle.pressed(on_ai_toggle)
+
+# turning
+def horiz_stick_func(x: int):
+    if x == 0:
+        return 0
+    squared = math.copysign(max(abs(x), 0.25) ** 3, x)
+    return squared
 
 
-def stick_func(x: int):
+# throttle
+def vert_stick_func(x: int):
+    if x == 0:
+        return 0
+    squared = math.copysign(max(abs(x), 0.25) ** 3, x)
+    return squared
+
+
+def ai_driver_align_func(x: int):
     if x == 0:
         return 0
     squared = math.copysign(max(abs(x), 0.25) ** 2, x)
@@ -367,48 +385,51 @@ def ai_sensor_debug(objs: tuple[AiVisionObject], target_obj: AiVisionObject):
 
 # takes a snapshot with the vision sensor and picks the first block
 # then it uses the block's x position and trigonometry to find how many degrees to turn the robot toward the block
-def align_to_block(block_xpos: int):
+def get_align_to_blocks(blocks: list[AiVisionObject], max_angle=ALIGN_MAX_ANGLE) -> int:
     global drivetrain, distance
-    print("attempting align")
+    # print("attempting align")
+
+    if len(blocks) <= 0:
+        return 0
+
+    xpos: int = 0
+    if len(blocks) == 1:
+        xpos = blocks[0].centerX
+    else:
+        x_positions = [block.centerX for block in blocks]
+        xpos = sum(x_positions) / len(x_positions)
 
     # 320x240 screen
     # relative position to the center
-    scr_x = block_xpos - 160
+    scr_x = xpos - 160
 
     # find the angle with inverse tangent
     # tan = opp/adj, opp = src_x, adj = dist to obj
     # 100 as approx distance for now
     angle_to_turn = math.degrees(math.atan2(scr_x, distance))
-    if abs(angle_to_turn) > 90 or abs(angle_to_turn) < ALIGN_DEADZONE:
-        return
+    if abs(angle_to_turn) > max_angle or abs(angle_to_turn) < ALIGN_DEADZONE:
+        return 0
     # print(angle_to_turn)
 
     # turn left or right according to +/-
-    direction = RIGHT if angle_to_turn > 0 else LEFT
-    print(
-        str(angle_to_turn)
-        + " degrees in direction "
-        + str(direction)
-        + ", with dist "
-        + str(distance)
-    )
-    Thread(drivetrain.turn_for, [direction, abs(angle_to_turn), DEGREES, 40, PERCENT])
+    # direction = RIGHT if angle_to_turn > 0 else LEFT
+    # print(
+    #     str(angle_to_turn)
+    #     + " degrees in direction "
+    #     + str(direction)
+    #     + ", with dist "
+    #     + str(distance)
+    # )
+    return angle_to_turn
+    # Thread(drivetrain.turn_for, [direction, abs(angle_to_turn), DEGREES, 40, PERCENT])
 
 
 def go_to_block():
     global drivetrain, distance
     print("attempting going to block")
 
-    drivetrain.drive(FORWARD, 100, PERCENT)
-    while target_obj.centerY >= 120:
-        get_ai_objs()
-    drivetrain.stop()
-
     # sin(theta) = o/h
     # o = h * sin(theta)
-    act_dist = distance * math.sin(math.radians(45))
-
-    drivetrain.drive_for(FORWARD, act_dist, DistanceUnits.MM, 100, PERCENT)
 
 
 def detecting_grabbables(
@@ -436,7 +457,8 @@ def detecting_grabbables(
 def optical_red_or_blue():
     global optical
     hue = optical.hue()
-    if hue < 27 or hue > 340:
+    # print(hue)
+    if hue < 23 or hue > 340:
         return RED.name
     elif hue > 50 and hue < 340:
         return BLUE.name
@@ -448,20 +470,117 @@ def optical_red_or_blue():
 
 
 def on_auto():
-    global ai_objs, target_objs, target_obj
+    global ai_objs, target_objs, target_obj, current_sort
     print("Autonomous Mode Started")
     br.screen.clear_screen()
     br.screen.print("Autonomous Mode Started")
 
-    while comp.is_autonomous():
+    while not drivetrain_calibrated:
+        calibrate_drivetrain()
+
+    if inertial_sensor.is_calibrating():
+        motorgroup_l.stop()
+        motorgroup_r.stop()
+        while inertial_sensor.is_calibrating():
+            sleep(25, MSEC)
+
+    switch_ramp_btns(0)
+
+    motor_intake.spin(REVERSE, 100, PERCENT)
+    current_sort = 1
+
+    # drivetrain.drive_for(FORWARD, 36, INCHES, 50, PERCENT, False)
+    print("ifjifoiseijofesiofs")
+    drivetrain.drive_for(FORWARD, 27, INCHES, 30, PERCENT)
+    wait(1000, MSEC)
+    # drivetrain.drive_for(FORWARD, 6, INCHES, 60, PERCENT)
+
+    # find the 3 blocks in front
+
+    turn_degrees = 0
+    timer = Timer()
+    while timer.value() < 2 and turn_degrees == 0:
+        # print("fokeofsokfesioesosoi")
         get_ai_objs()
         br.screen.clear_screen()
         ai_sensor_debug(ai_objs, target_obj)
         if len(target_objs) > 0:
-            # align to the target
-            align_to_block(target_obj.centerX)
-            # go_to_block()
+            turn_degrees = get_align_to_blocks(target_objs)
+
         wait(20, MSEC)
+
+    direction = RIGHT if turn_degrees > 0 else LEFT
+    drivetrain.turn_for(direction, turn_degrees, DEGREES, 30, PERCENT)
+    wait(500, MSEC)
+    drivetrain.drive_for(FORWARD, 14, INCHES, 20, PERCENT)
+    wait(500, MSEC)
+
+    # reverse back to original position
+    drivetrain.drive_for(REVERSE, 14, INCHES, 20, PERCENT)
+    wait(500, MSEC)
+    drivetrain.turn_to_rotation(0, DEGREES, 30, PERCENT)
+    wait(500, MSEC)
+
+    # go to loader
+    drivetrain.turn_to_rotation(110, DEGREES, 30, PERCENT)
+    wait(500, MSEC)
+    drivetrain.drive_for(FORWARD, 38, INCHES, 20, PERCENT)
+    wait(2000, MSEC)
+    drivetrain.turn_to_rotation(180, DEGREES, 30, PERCENT)
+    wait(2000, MSEC)
+
+    turn_degrees = 0
+    timer = Timer()
+    while timer.value() < 3 and turn_degrees == 0:
+        # print("fokeofsokfesioesosoi")
+        get_ai_objs()
+        br.screen.clear_screen()
+        ai_sensor_debug(ai_objs, target_obj)
+        if len(target_objs) > 0:
+            turn_degrees = get_align_to_blocks(target_objs)
+
+        wait(20, MSEC)
+
+    direction = RIGHT if turn_degrees > 0 else LEFT
+    drivetrain.turn_for(direction, turn_degrees, DEGREES, 30, PERCENT)
+    wait(2000, MSEC)
+
+    drivetrain.drive_for(FORWARD, 2, INCHES, 30, PERCENT)
+    wait(2000, MSEC)
+
+    # go back
+    drivetrain.drive_for(REVERSE, 2, INCHES, 30, PERCENT)
+    wait(2000, MSEC)
+    drivetrain.turn_to_rotation(-30, DEGREES, 30, PERCENT)
+    wait(2000, MSEC)
+    drivetrain.drive_for(FORWARD, 36, INCHES, 30, PERCENT)
+    wait(2000, MSEC)
+    drivetrain.turn_to_rotation(0, DEGREES, 30, PERCENT)
+    wait(2000, MSEC)
+
+    # go to bottom center goal
+    # drivetrain.drive_for(FORWARD, 2, INCHES, 30, PERCENT)
+    # wait(2000, MSEC)
+    drivetrain.turn_to_rotation(-30, DEGREES, 30, PERCENT)
+    wait(2000, MSEC)
+    drivetrain.drive_for(FORWARD, 13, INCHES, 30, PERCENT)
+    wait(2000, MSEC)
+
+    # motor_intake.spin(FORWARD, 100, PERCENT)
+
+    # drivetrain.turn_to_rotation(135, DEGREES, 100, PERCENT)
+    # drivetrain.drive_for(FORWARD, 6, INCHES, 60, PERCENT)
+    # drivetrain.turn_to_rotation(180, DEGREES, 100, PERCENT)
+
+    # wait(1000, MSEC)
+
+    # drivetrain.turn_to_rotation(0, DEGREES, 100, PERCENT)
+    # drivetrain.drive_for(FORWARD, 6, INCHES, 60, PERCENT)
+
+    motor_intake.stop()
+    drivetrain.stop()
+
+    current_sort = 0
 
 
 def on_usr_control():
@@ -470,6 +589,9 @@ def on_usr_control():
     print("Driver Control")
     br.screen.clear_screen()
     br.screen.print("Driver Control")
+
+    while not drivetrain_calibrated:
+        calibrate_drivetrain()
 
     def set_motor_speed(motor: Motor | MotorGroup, speed: int):
         if abs(speed) < DRIVETRAIN_DEADZONE:
@@ -500,27 +622,42 @@ def on_usr_control():
         # right = axis2
 
         new_d_r_horiz = apply_function_on_stick(
-            ctrler_r_horiz.position(), 100, stick_func
+            ctrler_r_horiz.position(), 100, horiz_stick_func
         )
-        d_r_horiz = new_d_r_horiz
-        # d_r_horiz = lerp(last_d_r_horiz, new_d_r_horiz, TURN_SMOOTHING)
 
-        new_d_l_vert = ctrler_l_vert.position()
-        d_l_vert = new_d_l_vert
-        # d_l_vert = lerp(last_d_l_left, new_d_l_vert, THROTTLE_SMOOTHING)
+        # ai align turn to block override
+        get_ai_objs()
+        if ctrler_btn_ai_hold.pressing() and len(target_objs) > 0:
+            angle = get_align_to_blocks([target_obj], ALIGN_MAX_ANGLE_DRIVE)
+            normalized = (angle / ALIGN_MAX_ANGLE_DRIVE) * 100
+            new_d_r_horiz = normalized
 
-        print("turning: " + str(d_r_horiz))
-        print("throttle: " + str(d_l_vert))
+        # d_r_horiz = new_d_r_horiz
+        d_r_horiz = lerp(last_d_r_horiz, new_d_r_horiz, TURN_SMOOTHING)
+
+        new_d_l_vert = apply_function_on_stick(
+            ctrler_l_vert.position(), 100, vert_stick_func
+        )
+        # d_l_vert = new_d_l_vert
+        d_l_vert = lerp(
+            last_d_l_left,
+            new_d_l_vert,
+            THROTTLE_SMOOTHING + (THROTTLE_SMOOTHING_ADD * abs(new_d_l_vert / 100)),
+        )
+
+        # print("turning: " + str(d_r_horiz))
+        # print("throttle: " + str(d_l_vert))
 
         d_l_vert_round = math.copysign(math.floor(abs(d_l_vert)), d_l_vert)
+
         d_r_horiz_round = math.copysign(math.floor(abs(d_r_horiz)), d_r_horiz)
 
         l_drivetrain_vel = min_neg(d_l_vert_round + d_r_horiz_round, 100)
         r_drivetrain_vel = min_neg(d_l_vert_round - d_r_horiz_round, 100)
 
-        print("left motorgroup vel: " + str(l_drivetrain_vel))
-        print("right motorgroup vel: " + str(r_drivetrain_vel))
-        print()
+        # print("left motorgroup vel: " + str(l_drivetrain_vel))
+        # print("right motorgroup vel: " + str(r_drivetrain_vel))
+        # print()
 
         set_motor_speed(motorgroup_l, l_drivetrain_vel)
         set_motor_speed(motorgroup_r, r_drivetrain_vel)
@@ -588,37 +725,11 @@ scr.draw_rectangle(220, 40, 40, 80, 0x00F0000)
 
 
 while True:
-    if ai_toggled and len(ai_objs) > 0:
-        get_ai_objs()
-        # if anything we want to grab is detected
-        if len(target_objs) > 0:
-            # align to the first one
-            align_to_block(target_obj.centerX)
-        else:  # otherwise do something else
-            # drivetrain.turn_for(IDLE_TURN_DIR, IDLE_TURN_DEGREES, DEGREES)
-            pass
-
-        # if we can grab something, grab it
-        if detecting_grabbables(target_objs, GRAB_SIZE_REQ, GRAB_X_RANGE, GRAB_Y_POS):
-            # spin the intake motor and stop moving
-
-            Thread(motor_intake.spin, [FORWARD])
-            # Thread(drivetrain.stop)
-            pass
-        # if we can grab something but wrong team, dont
-        elif detecting_grabbables(ai_objs, GRAB_SIZE_REQ, GRAB_X_RANGE, GRAB_Y_POS):
-            # TODO considering changing this
-
-            Thread(motor_intake.spin, [REVERSE])
-            # Thread(drivetrain.drive, [REVERSE])
-            pass
-        else:
-            motor_intake.stop()
-
     # sorting logic ------------------
 
     # print(optical.hue())
-    detect = optical_red_or_blue() or "NONE"
+    if not comp.is_autonomous():
+        detect = optical_red_or_blue() or "NONE"
     # scr.print("optical detecting: " + detect)
     # scr.next_row()
 
@@ -638,18 +749,41 @@ while True:
         wait(50, MSEC)
         continue
 
+    # if block is enemy's, take them and store them
+    # else don't
     new_sort = 0
     if detect == TEAM.name:
-        new_sort = 1
-    elif detect != "NONE":
         new_sort = 2
+    elif detect != "NONE":
+        new_sort = 1
     else:
         new_sort = 0
 
-    scr.print("new sort: " + str(new_sort))
+    # print("new sort: " + str(new_sort))
 
-    if new_sort != current_sort and sorting_timer.time(MSEC) >= SORT_SWITCH_DELAY:
-        sorting_timer.reset()
-        sorting_timer.event(set_sort, SORT_SWITCH_DELAY, [new_sort])
+    if comp.is_autonomous():
+        new_sort = 2
+
+    if new_sort != current_sort:
+        # if the new_sort is nothing and the current sort is 1 or 2, i.e. sorting, check for the switch off delay
+        # if the new_sort is not nothing, check for the sort switch on delay
+
+        if (
+            new_sort != 0
+            and sorting_timer.time(MSEC) >= SORT_SWITCH_ON_DELAY * sorting_ratio_wait
+        ):
+            sorting_timer.reset()
+            sorting_timer.event(
+                set_sort, round(SORT_SWITCH_ON_DELAY * sorting_ratio_delay), [new_sort]
+            )
+        elif (
+            current_sort != 0
+            and new_sort == 0
+            and sorting_timer.time(MSEC) >= SORT_SWITCH_OFF_DELAY * sorting_ratio_wait
+        ):
+            sorting_timer.reset()
+            sorting_timer.event(
+                set_sort, round(SORT_SWITCH_OFF_DELAY * sorting_ratio_delay), [new_sort]
+            )
 
     wait(20, MSEC)

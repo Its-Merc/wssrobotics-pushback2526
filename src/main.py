@@ -12,7 +12,7 @@ import urandom, math
 
 class Side:
     def __init__(self, color: int):
-        self.color = BLUE.name if color == BLUE.as_int else RED.name
+        self.color = BLUE_ENUM.name if color == BLUE_ENUM.as_int else RED_ENUM.name
 
 
 class EnumObj:
@@ -25,14 +25,14 @@ class EnumObj:
 # constants ==============================================================
 
 # colors -------------------------
-red = 0x00FF0000
-blue = 0x000000FF
+colour_red = 0x00FF0000
+colour_blue = 0x000000FF
 
-BLUE = EnumObj("BLUE", 0)
-RED = EnumObj("RED", 1)
+BLUE_ENUM = EnumObj("BLUE", 0)
+RED_ENUM = EnumObj("RED", 1)
 
 # 0 = blue, 1 = red
-TEAM = BLUE
+TEAM = BLUE_ENUM
 
 # drivetrain settings ------------
 
@@ -45,8 +45,9 @@ TURN_SMOOTHING = 0.5
 # end drivetrain settings --------
 # ramp settings ------------------
 
-RAMP_POSITIONS = [90, -20, 0]
+RAMP_POSITIONS = [120, -5, 25]
 RAMP_DIR_OFFSET = 0
+# attach arm 3rd space down from gear
 
 # end ramp settings --------------
 # sorting settings ---------------
@@ -163,6 +164,8 @@ ctrler_btn_intake_out = ctrler.buttonR1
 ctrler_btn_ramp_high = ctrler.buttonUp
 ctrler_btn_ramp_med = ctrler.buttonLeft
 ctrler_btn_ramp_low = ctrler.buttonDown
+ctrler_btn_ramp_in = ctrler.buttonUp
+ctrler_btn_ramp_out = ctrler.buttonDown
 
 ctrler_btn_ai_hold = ctrler.buttonY
 
@@ -360,7 +363,7 @@ def ai_sensor_debug(objs: tuple[AiVisionObject], target_obj: AiVisionObject):
             obj.width,
             obj.height,
             (
-                (blue if color.color == BLUE.name else red)
+                (colour_blue if color.color == BLUE_ENUM.name else colour_red)
                 | max(0, min(255, math.ceil((1 - (obj.score / 100)) * 255))) << 24
             ),
         )
@@ -459,9 +462,9 @@ def optical_red_or_blue():
     hue = optical.hue()
     # print(hue)
     if hue < 23 or hue > 340:
-        return RED.name
+        return RED_ENUM.name
     elif hue > 50 and hue < 340:
-        return BLUE.name
+        return BLUE_ENUM.name
     return None
 
 
@@ -494,7 +497,7 @@ def on_auto():
 
     go_loader_dist_horiz = 30
     parking_zone_dist = 17
-    loader_dist = parking_zone_dist - 4.5
+    loader_dist = parking_zone_dist - 3.5
     go_back_vert_offset = 4.5
     go_back_extra = 6
 
@@ -508,33 +511,44 @@ def on_auto():
     # wait(500, MSEC)
     drivetrain.turn_to_rotation(180, DEGREES, turn_vel - 5, PERCENT)
     wait(500, MSEC)
-    # drivetrain.drive_for(FORWARD, 6, INCHES, 60, PERCENT)
+    drivetrain.drive_for(FORWARD, 6, INCHES, 60, PERCENT)
 
     # find the loader blocks
-    # turn_degrees = 0
-    # timer = Timer()
-    # while timer.value() < 2 and turn_degrees == 0:
-    #     # print("fokeofsokfesioesosoi")
-    #     get_ai_objs()
-    #     br.screen.clear_screen()
-    #     ai_sensor_debug(ai_objs, target_obj)
-    #     if len(target_objs) > 0:
-    #         turn_degrees = get_align_to_blocks(target_objs)
+    turn_degrees = 0
+    timer = Timer()
+    while timer.value() < 2 and turn_degrees == 0:
+        # print("fokeofsokfesioesosoi")
+        get_ai_objs()
+        br.screen.clear_screen()
+        ai_sensor_debug(ai_objs, target_obj)
+        if len(target_objs) > 0:
+            turn_degrees = get_align_to_blocks(target_objs)
 
-    #     wait(20, MSEC)
+        wait(20, MSEC)
 
-    # direction = RIGHT if turn_degrees > 0 else LEFT
-    # drivetrain.turn_for(direction, turn_degrees, DEGREES, turn_vel, PERCENT)
-    # wait(500, MSEC)
+    direction = RIGHT if turn_degrees > 0 else LEFT
+    drivetrain.turn_for(direction, turn_degrees, DEGREES, turn_vel, PERCENT)
+    wait(500, MSEC)
 
     switch_ramp_btns(1)
+    wait(500, MSEC)
 
     drivetrain.drive_for(FORWARD, loader_dist, INCHES, throttle_vel, PERCENT)
     wait(500, MSEC)
 
     # rattle em
     drivetrain.drive(FORWARD, 100, PERCENT)
-    wait(2000, MSEC)
+
+    wait(500, MSEC)
+
+    switch_ramp_btns(2)
+
+    timer = Timer()
+    while timer.value() < 2.5:
+        drivetrain.drive(FORWARD, 100, PERCENT)
+        wait(200, MSEC)
+        drivetrain.drive(REVERSE, 100, PERCENT)
+        wait(130, MSEC)
 
     # reverse back to original position
     drivetrain.drive_for(
@@ -555,7 +569,7 @@ def on_auto():
     # wait(500, MSEC)
 
     # pythagorean theorem
-    go_back_dist = math.sqrt((go_loader_dist_horiz**2) * 2) + go_back_extra
+    go_back_dist = math.sqrt((go_loader_dist_horiz**2) * 2)
 
     # turn_degrees = 0
     # timer = Timer()
@@ -574,6 +588,9 @@ def on_auto():
     # wait(500, MSEC)
 
     drivetrain.drive_for(FORWARD, go_back_dist, INCHES, throttle_vel, PERCENT)
+    wait(500, MSEC)
+    motor_intake.spin(FORWARD, 100, PERCENT)
+    drivetrain.drive_for(FORWARD, go_back_extra, INCHES, 20, PERCENT)
     wait(1000, MSEC)
 
     # motor_intake.spin(FORWARD, 100, PERCENT)
@@ -625,7 +642,7 @@ def on_usr_control():
             motorgroup_r.stop()
             while inertial_sensor.is_calibrating():
                 sleep(25, MSEC)
-            motor_ramp.set_position(90, DEGREES)
+            motor_ramp.set_position(120, DEGREES)
 
         # calculate the drivetrain motor velocities from the controller joystick axies
         # left = axis3
@@ -684,6 +701,10 @@ def on_usr_control():
                 - ctrler_btn_scoring_down_hold.pressing()
             ),
         )
+        # set_motor_speed(
+        #     motor_ramp,
+        #     -100 * (ctrler_btn_ramp_in.pressing() - ctrler_btn_ramp_out.pressing()),
+        # )
         if current_sort == 0:
             set_motor_speed(
                 motor_sorting,
@@ -698,6 +719,22 @@ def on_usr_control():
 
         last_d_l_left = d_l_vert
         last_d_r_horiz = d_r_horiz
+
+
+def unit_testing():
+    print("Unit tests start")
+
+    print("Unit test 1")
+    switch_ramp_btns(0)
+    wait(5000, MSEC)
+    switch_ramp_btns(1)
+    wait(5000, MSEC)
+    switch_ramp_btns(2)
+    wait(5000, MSEC)
+
+    wait(5000, MSEC)
+
+    print("Unit tests done")
 
 
 # create competition instance
@@ -721,18 +758,9 @@ scr.draw_circle(200, 120, 25, 0x00F0000)
 scr.draw_circle(280, 120, 25, 0x00F0000)
 scr.draw_rectangle(220, 40, 40, 80, 0x00F0000)
 
-# print("Unit test 1")
+motor_ramp.set_position(120, DEGREES)
 
-# motor_sorting.spin_for(FORWARD, 1000, MSEC)
-# motor_sorting.spin_for(REVERSE, 1000, MSEC)
-
-# drivetrain.turn_to_heading(45, RotationUnits.DEG, 70, VelocityUnits.PERCENT)
-
-# print("Unit test 2")
-# drivetrain.turn_for(LEFT, 45, DEGREES, 70, PERCENT)
-
-# print("Unit tests done")
-
+# unit_testing()
 
 while True:
     # sorting logic ------------------

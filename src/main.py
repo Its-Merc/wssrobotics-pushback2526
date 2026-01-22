@@ -34,43 +34,75 @@ RED_ENUM = EnumObj("RED", 1)
 # 0 = blue, 1 = red
 TEAM = BLUE_ENUM
 
-# drivetrain settings ------------
+# motor settings -----------------
 
-DRIVETRAIN_DEADZONE = 2
-DRIVETRAIN_TURN_THRESHOLD = 1
+MOTOR_DEADZONE = 2  # set_motor_speed will not set the motor speed if the requested speed is less than this
+SORTING_MOTOR_VEL = 100
+RAMP_MOTOR_VEL = 100
+
+# end motor settings -------------
+# drivetrain/ctrler settings -----
+
+DRIVETRAIN_TURN_THRESHOLD = 0.5  # how many degrees off the turning can be
+
+MIN_THROTTLE_INPUT_NORM = (
+    0.25  # the minimum normalized value the throttle joystick can have
+)
+MIN_TURN_INPUT_NORM = 0.25  # the minimum normalized value the turn joystick can have
+
+# t in lerp for throttle
+# higher values give less interpolation
+# lower values gives more interpolation
 THROTTLE_SMOOTHING = 0.08
+
+# adds t in lerp depending how much throttle is applied
+# bigger t = less interpolation
+# allows for acceleration that doesn't take ages, while keeping a slow deceleration
 THROTTLE_SMOOTHING_ADD = 0.15
+
+# t in lerp for throttleturning
+# give less interpolation
+# lower values gives more interpolation
 TURN_SMOOTHING = 0.5
 
-# end drivetrain settings --------
+# end drivetrain/ctrler settings -
 # ramp settings ------------------
 
-RAMP_POSITIONS = [120, -5, 25]
-RAMP_DIR_OFFSET = 0
-# attach arm 3rd space down from gear
+RAMP_POSITIONS = [120, -5, 25]  # the angles at which the front "ramp" will turn to
+RAMP_DIR_OFFSET = 0  # kinda useless ngl
+
+# note: attach arm 3rd space down from gear for ramp
 
 # end ramp settings --------------
 # sorting settings ---------------
 
+# delays for the auto sorting
 SORT_SWITCH_OFF_DELAY = 500  # ms
-SORT_SWITCH_ON_DELAY = 100  # ms
+SORT_SWITCH_ON_DELAY = 25  # ms
 
-SORT_DELAY_RATIO_D = 9
-SORT_DELAY_RATIO_N = 4  # the numerator to take of the sort_delay for waiting until the timer is over the delay
+# see the sort delay code
+# essentially, the ratio of:
+SORT_WAIT_RATIO = (
+    5  # how much to delay the system figuring out what sort mode to choose
+)
+SORT_DELAY_RATIO = 4  # how much to delay the act of actually switching the sort mode
 
 # end sorting settings -----------
 # ai settings --------------------
 
+# useless
 IDLE_TURN_DEGREES = 1
 IDLE_TURN_DIR = RIGHT
 
-ALIGN_MAX_ANGLE = 90
-ALIGN_MAX_ANGLE_DRIVE = 90
-ALIGN_DEADZONE = 2
+# settings for aligning with a block
+ALIGN_MAX_ANGLE = 90  # during autonomous
+ALIGN_MAX_ANGLE_DRIVE = 80  # during driver control
+ALIGN_DEADZONE = 2  # essentially the driver turn threshold for aligning
 
-GRAB_SIZE_REQ = 35
-GRAB_X_RANGE = 35
-GRAB_Y_POS = 145
+# for auto grabbing
+GRAB_SIZE_REQ = 35  # checks if the ball is bigger than this
+GRAB_X_RANGE = 35  # checks if the ball is between (-x, x)
+GRAB_Y_POS = 145  # checks if the ball is lower than that y pos
 
 # end ai settings ----------------
 # ports --------------------------
@@ -97,7 +129,7 @@ wait(30, MSEC)
 # initialization =========================================================
 
 br = Brain()
-scr = br.screen  # 480x240 px screen
+scr = br.screen  # 480x240 px screen, 240, 120 is the center
 
 # drivetrain setup ---------------
 
@@ -116,12 +148,12 @@ drivetrain = SmartDrive(
 )
 
 drivetrain.set_turn_threshold(DRIVETRAIN_TURN_THRESHOLD)
-drivetrain.set_stopping(BrakeType.BRAKE)
+drivetrain.set_stopping(BrakeType.HOLD)  # coasting kinda sucks
 
 drivetrain_calibrated = False
 
 
-# from the auto generator
+# from the auto generator on the vex v5 website
 def calibrate_drivetrain():
     # global drivetrain_is_calibrated, scr, inertial_sensor
     # Calibrate the Drivetrain Inertial
@@ -142,34 +174,40 @@ def calibrate_drivetrain():
 # ctrler setup -------------------
 
 ctrler = Controller(PRIMARY)
+
+# a bunch of aliases for ease of use
+
+# the 4 joystick axes
 ctrler_r_horiz = ctrler.axis1
 ctrler_r_vert = ctrler.axis2
 ctrler_l_vert = ctrler.axis3
 ctrler_l_horiz = ctrler.axis4
 
-ctrler_l_dead = False
-ctrler_r_dead = False
-
+# scoring motor ctrls
 ctrler_btn_scoring_up_hold = ctrler.buttonL1
 ctrler_btn_scoring_down_hold = ctrler.buttonL2
 
+# sorting overrides
 ctrler_btn_sorting_out_toggle = ctrler.buttonX  # 1
 ctrler_btn_sorting_in_toggle = ctrler.buttonB  # 2
 ctrler_btn_sorting_no_toggle = ctrler.buttonA  # 0
-sorting_override_btn_mode = -1
+sorting_override_btn_mode = -1  # current override mode
 
+# intake motor ctrls
 ctrler_btn_intake_in = ctrler.buttonR2
 ctrler_btn_intake_out = ctrler.buttonR1
 
+# ramp ctrls
 ctrler_btn_ramp_high = ctrler.buttonUp
 ctrler_btn_ramp_med = ctrler.buttonLeft
 ctrler_btn_ramp_low = ctrler.buttonDown
-ctrler_btn_ramp_in = ctrler.buttonUp
-ctrler_btn_ramp_out = ctrler.buttonDown
+ctrler_btn_ramp_in = ctrler.buttonUp  # debugging purposes
+ctrler_btn_ramp_out = ctrler.buttonDown  # debugging purposes
 
+# hold this button to use ai sensor for stuff during driving mode
 ctrler_btn_ai_hold = ctrler.buttonY
 
-ctrler_control_enabled = True
+ctrler_control_enabled = True  # flag for whether ctrler should be usable
 
 # end ctrler setup ---------------
 # sensor setup -------------------
@@ -195,12 +233,13 @@ motor_scoring = Motor(MOTOR_SCORING_PORT)
 motor_sorting = Motor(MOTOR_SORTING_PORT)
 motor_ramp = Motor(MOTOR_RAMP_PORT)
 
-motor_sorting.set_velocity(100, PERCENT)
+motor_sorting.set_velocity(SORTING_MOTOR_VEL, PERCENT)
+motor_ramp.set_velocity(RAMP_MOTOR_VEL, PERCENT)
 
 # end motors setup ----------------
 # bumper setup --------------------
 
-bumper_1 = Bumper(br.three_wire_port.a)
+bumper_1 = Bumper(br.three_wire_port.a)  # currently useless
 
 # end bumper setup ---------------
 # sorting setup -------------------
@@ -209,10 +248,13 @@ sorting_timer = Timer()
 sorting_timer.reset()
 current_sort = 0  # 0 = none, 1 = team, 2 = other
 
-sorting_ratio_wait = SORT_DELAY_RATIO_N / SORT_DELAY_RATIO_D
-sorting_ratio_delay = (SORT_DELAY_RATIO_D - SORT_DELAY_RATIO_N) / SORT_DELAY_RATIO_D
+# waiting until the "signal" can be sent
+sorting_ratio_wait = SORT_WAIT_RATIO / (SORT_WAIT_RATIO + SORT_DELAY_RATIO)
+# how long until the "signal" is "received"
+sorting_ratio_delay = SORT_DELAY_RATIO / (SORT_WAIT_RATIO + SORT_DELAY_RATIO)
 
 
+# 0 = stop, 1 = out, 2 = in
 def set_sort(new_sort: int):
     global motor_sorting, current_sort
     if new_sort == current_sort:
@@ -230,8 +272,8 @@ def set_sort(new_sort: int):
 # misc funcs ---------------------
 
 
+# from the auto generator on the vex v5 website
 # Make random actually random
-# from the auto generator
 def initialize_random_seed():
     wait(100, MSEC)
     random = (
@@ -246,10 +288,12 @@ def lerp(a: float, b: float, t: float) -> float:
     return a - (a - b) * t
 
 
+# gets the min of two ints based on their absolute values
 def min_neg(a: int, b: int) -> int:
     return math.copysign(1, b) * math.copysign(min(abs(a), abs(b)), a)
 
 
+# gets the max of two ints based on their absolute values
 def max_neg(a: int, b: int) -> int:
     return math.copysign(1, b) * math.copysign(max(abs(a), abs(b)), a)
 
@@ -270,6 +314,7 @@ def switch_ramp_btns(pos: int = 0):
     motor_ramp.spin_to_position(RAMP_POSITIONS[pos] + RAMP_DIR_OFFSET, DEGREES, False)
 
 
+# 0 = stop, 1 = out, 2 = in
 ctrler_btn_sorting_out_toggle.pressed(toggle_sorting_btn, [1])
 ctrler_btn_sorting_in_toggle.pressed(toggle_sorting_btn, [2])
 ctrler_btn_sorting_no_toggle.pressed(toggle_sorting_btn, [0])
@@ -283,23 +328,35 @@ ctrler_btn_ramp_low.pressed(switch_ramp_btns, [1])
 def horiz_stick_func(x: int):
     if x == 0:
         return 0
-    squared = math.copysign(max(abs(x), 0.25) ** 3, x)
-    return squared
+
+    # x cant be less than y
+    # abs x
+    # cubed x
+    x_prime = math.copysign(max(abs(x), 0.25) ** 3, x)
+    return x_prime
 
 
 # throttle
 def vert_stick_func(x: int):
     if x == 0:
         return 0
-    squared = math.copysign(max(abs(x), 0.25) ** 3, x)
-    return squared
+
+    # x cant be less than y
+    # abs x
+    # cubed x
+    x_prime = math.copysign(max(abs(x), 0.25) ** 3, x)
+    return x_prime
 
 
+# func for aligning
 def ai_driver_align_func(x: int):
     if x == 0:
         return 0
-    squared = math.copysign(max(abs(x), 0.25) ** 2, x)
-    return squared
+
+    # abs x
+    # quadratic x
+    x_prime = math.copysign(abs(x) ** 2, x)
+    return x_prime
 
 
 def apply_function_on_stick(pos: int, max: int, func):
@@ -473,10 +530,12 @@ def optical_red_or_blue():
 
 
 def on_auto():
-    global ai_objs, target_objs, target_obj, current_sort
+    global ai_objs, target_objs, target_obj, current_sort, ctrler_control_enabled
     print("Autonomous Mode Started")
     br.screen.clear_screen()
     br.screen.print("Autonomous Mode Started")
+
+    ctrler_control_enabled = False
 
     while not drivetrain_calibrated:
         calibrate_drivetrain()
@@ -611,17 +670,19 @@ def on_auto():
 
 
 def on_usr_control():
-    global ctrler_l_dead, ctrler_r_dead, motor_intake, motor_scoring, ctrler_control_enabled, current_sort, sorting_override_btn_mode
+    global motor_intake, motor_scoring, ctrler_control_enabled, current_sort, sorting_override_btn_mode
 
     print("Driver Control")
     br.screen.clear_screen()
     br.screen.print("Driver Control")
 
+    ctrler_control_enabled = True
+
     while not drivetrain_calibrated:
         calibrate_drivetrain()
 
     def set_motor_speed(motor: Motor | MotorGroup, speed: int):
-        if abs(speed) < DRIVETRAIN_DEADZONE:
+        if abs(speed) < MOTOR_DEADZONE:
             motor.stop()
             return
         motor.set_velocity(speed, PERCENT)
@@ -657,7 +718,9 @@ def on_usr_control():
         if ctrler_btn_ai_hold.pressing() and len(target_objs) > 0:
             angle = get_align_to_blocks([target_obj], ALIGN_MAX_ANGLE_DRIVE)
             normalized = (angle / ALIGN_MAX_ANGLE_DRIVE) * 100
-            new_d_r_horiz = normalized
+            new_d_r_horiz = apply_function_on_stick(
+                normalized, 100, ai_driver_align_func
+            )
 
         # d_r_horiz = new_d_r_horiz
         d_r_horiz = lerp(last_d_r_horiz, new_d_r_horiz, TURN_SMOOTHING)

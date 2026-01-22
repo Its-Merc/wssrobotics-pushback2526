@@ -107,6 +107,8 @@ GRAB_Y_POS = 145  # checks if the ball is lower than that y pos
 # end ai settings ----------------
 # ports --------------------------
 
+# port 1 -> 0
+
 # 2, 1 front, 12, 11, back
 DRIVETRAIN_PORTS = [1, 0, 11, 10]  # front motors, back motors, l -> r
 
@@ -368,9 +370,9 @@ def apply_function_on_stick(pos: int, max: int, func):
 # end ctrler funcs ---------------
 # ai setup -----------------------
 
-ai_objs = tuple()
-target_objs = list()
-target_obj = AiVisionObject()
+ai_objs = tuple()  # any objs
+target_objs = list()  # objs that are of same team colour
+target_obj = AiVisionObject()  # the first obj in target objs
 
 distance: DistanceUnits = 0
 
@@ -484,6 +486,7 @@ def get_align_to_blocks(blocks: list[AiVisionObject], max_angle=ALIGN_MAX_ANGLE)
     # Thread(drivetrain.turn_for, [direction, abs(angle_to_turn), DEGREES, 40, PERCENT])
 
 
+# brokey
 def go_to_block():
     global drivetrain, distance
     print("attempting going to block")
@@ -514,6 +517,7 @@ def detecting_grabbables(
     return False
 
 
+# uses optical sensor hue to detect red vs blue for sorting
 def optical_red_or_blue():
     global optical
     hue = optical.hue()
@@ -537,6 +541,8 @@ def on_auto():
 
     ctrler_control_enabled = False
 
+    # calibrating stuff
+
     while not drivetrain_calibrated:
         calibrate_drivetrain()
 
@@ -546,9 +552,9 @@ def on_auto():
         while inertial_sensor.is_calibrating():
             sleep(25, MSEC)
 
+    # ramp in up pos
     switch_ramp_btns(0)
 
-    motor_intake.spin(REVERSE, 100, PERCENT)
     current_sort = 1
 
     turn_vel = 20
@@ -560,8 +566,14 @@ def on_auto():
     go_back_vert_offset = 4.5
     go_back_extra = 6
 
+    # drive to loader (exclusively right currently)
+    # 1. drive forward to go past the parking zone
+    # 2. turn 90 degrees to loader
+    # 3. drive to loader
+    # 4. turn to face loader
+    # 5. drive a bit closer
+
     # drivetrain.drive_for(FORWARD, 36, INCHES, 50, PERCENT, False)
-    print("ifjifoiseijofesiofs")
     drivetrain.drive_for(FORWARD, parking_zone_dist, INCHES, throttle_vel, PERCENT)
     # wait(500, MSEC)
     drivetrain.turn_to_rotation(90, DEGREES, turn_vel, PERCENT)
@@ -589,6 +601,10 @@ def on_auto():
     drivetrain.turn_for(direction, turn_degrees, DEGREES, turn_vel, PERCENT)
     wait(500, MSEC)
 
+    # spin intake motor to suck up
+    motor_intake.spin(REVERSE, 100, PERCENT)
+
+    # ramp in down pos
     switch_ramp_btns(1)
     wait(500, MSEC)
 
@@ -600,6 +616,7 @@ def on_auto():
 
     wait(500, MSEC)
 
+    # ramp in slightly up pos
     switch_ramp_btns(2)
 
     timer = Timer()
@@ -618,8 +635,6 @@ def on_auto():
     switch_ramp_btns(0)
     # drivetrain.turn_to_rotation(0, DEGREES, 30, PERCENT)
     # wait(500, MSEC)
-
-    # go to loader
 
     # go back to bottom center goal
 
@@ -651,6 +666,8 @@ def on_auto():
     motor_intake.spin(FORWARD, 100, PERCENT)
     drivetrain.drive_for(FORWARD, go_back_extra, INCHES, 20, PERCENT)
     wait(1000, MSEC)
+
+    # should arrive at center goal by now
 
     # motor_intake.spin(FORWARD, 100, PERCENT)
 
@@ -697,7 +714,7 @@ def on_usr_control():
         wait(20, MSEC)
         if not ctrler_control_enabled:
             continue
-        # stop the motors if the brain is calibrating
+        # calibrate stuff
         if inertial_sensor.is_calibrating():
             motorgroup_l.stop()
             motorgroup_r.stop()
@@ -709,11 +726,12 @@ def on_usr_control():
         # left = axis3
         # right = axis2
 
+        # turning input
         new_d_r_horiz = apply_function_on_stick(
             ctrler_r_horiz.position(), 100, horiz_stick_func
         )
 
-        # ai align turn to block override
+        # ai align turning override
         get_ai_objs()
         if ctrler_btn_ai_hold.pressing() and len(target_objs) > 0:
             angle = get_align_to_blocks([target_obj], ALIGN_MAX_ANGLE_DRIVE)
@@ -721,27 +739,31 @@ def on_usr_control():
             new_d_r_horiz = apply_function_on_stick(
                 normalized, 100, ai_driver_align_func
             )
+            # doesnt use the direct drivetrain turning because it doesnt allow for moving forward at the same time
 
         # d_r_horiz = new_d_r_horiz
-        d_r_horiz = lerp(last_d_r_horiz, new_d_r_horiz, TURN_SMOOTHING)
+        d_r_horiz = lerp(last_d_r_horiz, new_d_r_horiz, TURN_SMOOTHING)  # interpolate
 
+        # throttle input
         new_d_l_vert = apply_function_on_stick(
             ctrler_l_vert.position(), 100, vert_stick_func
         )
+
         # d_l_vert = new_d_l_vert
         d_l_vert = lerp(
             last_d_l_left,
             new_d_l_vert,
             THROTTLE_SMOOTHING + (THROTTLE_SMOOTHING_ADD * abs(new_d_l_vert / 100)),
-        )
+        )  # interpolate
 
         # print("turning: " + str(d_r_horiz))
         # print("throttle: " + str(d_l_vert))
 
+        # round to the closest whole number that is closer to zero
         d_l_vert_round = math.copysign(math.floor(abs(d_l_vert)), d_l_vert)
-
         d_r_horiz_round = math.copysign(math.floor(abs(d_r_horiz)), d_r_horiz)
 
+        # caps the velocities to magnitude 100
         l_drivetrain_vel = min_neg(d_l_vert_round + d_r_horiz_round, 100)
         r_drivetrain_vel = min_neg(d_l_vert_round - d_r_horiz_round, 100)
 
@@ -752,10 +774,17 @@ def on_usr_control():
         set_motor_speed(motorgroup_l, l_drivetrain_vel)
         set_motor_speed(motorgroup_r, r_drivetrain_vel)
 
+        # intake in -> 100
+        # intake out -> -100
+        # no input -> 0
         set_motor_speed(
             motor_intake,
             100 * (ctrler_btn_intake_in.pressing() - ctrler_btn_intake_out.pressing()),
         )
+
+        # scoring up -> -100
+        # scoring down -> 100
+        # no input -> 0
         set_motor_speed(
             motor_scoring,
             -100
@@ -768,6 +797,11 @@ def on_usr_control():
         #     motor_ramp,
         #     -100 * (ctrler_btn_ramp_in.pressing() - ctrler_btn_ramp_out.pressing()),
         # )
+
+        # no override -> whatever its supposed to be
+        # override 0 -> 0
+        # override 1 -> 100
+        # override 2 -> -100
         if current_sort == 0:
             set_motor_speed(
                 motor_sorting,
@@ -787,15 +821,14 @@ def on_usr_control():
 def unit_testing():
     print("Unit tests start")
 
+    # testing ramp settings
     print("Unit test 1")
     switch_ramp_btns(0)
-    wait(5000, MSEC)
+    wait(2500, MSEC)
     switch_ramp_btns(1)
-    wait(5000, MSEC)
+    wait(2500, MSEC)
     switch_ramp_btns(2)
-    wait(5000, MSEC)
-
-    wait(5000, MSEC)
+    wait(2500, MSEC)
 
     print("Unit tests done")
 
@@ -816,20 +849,19 @@ calibrate_drivetrain()
 scr.clear_screen()
 scr.print("Starting...")
 
-# rocket
+# rocket drawing!
 scr.draw_circle(200, 120, 25, 0x00F0000)
 scr.draw_circle(280, 120, 25, 0x00F0000)
 scr.draw_rectangle(220, 40, 40, 80, 0x00F0000)
 
+# assume the motor is at position 120 at start
 motor_ramp.set_position(120, DEGREES)
 
 # unit_testing()
 
 while True:
-    # sorting logic ------------------
-
     # print(optical.hue())
-    if not comp.is_autonomous():
+    if not comp.is_autonomous():  # gives autonomous control over sorting currently
         detect = optical_red_or_blue() or "NONE"
     # scr.print("optical detecting: " + detect)
     # scr.next_row()
@@ -844,10 +876,13 @@ while True:
     # print("sorting timer: " + str(sorting_timer.time(MSEC)))
     # print()
 
+    # sorting logic past here
+
+    # override on means current sort is 0
     if sorting_override_btn_mode != -1:
         current_sort = 0
         scr.print("sort override: " + str(sorting_override_btn_mode))
-        wait(50, MSEC)
+        wait(20, MSEC)  # do the delay
         continue
 
     # if block is enemy's, take them and store them
